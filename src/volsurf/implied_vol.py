@@ -28,7 +28,6 @@ from .black_scholes import is_call
 
 SIGMA_MAX = 10.0  # 1000% vol: anything above is treated as unsolvable
 RESOLUTION = 1e3 * np.finfo(float).eps  # smallest usable time value, relative to the prices involved
-RESOLUTION = 1e3 * np.finfo(float).eps  # smallest usable time value, relative to the prices involved
 
 
 def _otm_price_and_vega(F, K, T, sigma, otm_call):

@@ -12,8 +12,6 @@ import numpy as np
 
 from .black_scholes import is_call
 
-from .black_scholes import is_call
-
 
 def crr_price(
     S: float,

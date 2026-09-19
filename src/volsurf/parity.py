@@ -10,14 +10,8 @@ from __future__ import annotations
 
 import warnings
 
-import warnings
-
 import numpy as np
 from numpy.typing import ArrayLike
-
-# Implied rates outside this band almost always mean the regression is unreliable
-# (strikes too close together, stale or American quotes), not a real market rate.
-PLAUSIBLE_RATE = (-0.02, 0.20)
 
 # Implied rates outside this band almost always mean the regression is unreliable
 # (strikes too close together, stale or American quotes), not a real market rate.
@@ -39,7 +33,6 @@ def implied_forward(
     chains the near-the-money strikes are closely spaced, so it is more robust
     to take the discount factor from a rate curve and pass it in: the forward
     is then the median of K + (C - P) / D, one estimate per strike. Pass the
-    expiry ``T`` to get a warning when the regression implies an implausible rate. Pass the
     expiry ``T`` to get a warning when the regression implies an implausible rate.
 
     ``n_nearest`` restricts the estimate to the strikes with the smallest
