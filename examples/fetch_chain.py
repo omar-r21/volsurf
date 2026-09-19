@@ -3,15 +3,20 @@
     python examples/fetch_chain.py SPY
 
 Writes data/<ticker>_<date>.csv with columns T, strike, kind, bid, ask, plus the
-spot price (`spot`) and a continuously compounded risk-free rate (`rate`) taken
-from the 13-week T-bill yield. Requires the optional `yfinance` dependency.
-Yahoo data is delayed and for personal/research use only.
+spot price (`spot`), a continuously compounded risk-free rate (`rate`) taken
+from the 13-week T-bill yield, and the quote time (`as_of`). Requires the
+optional `yfinance` dependency. Yahoo data is delayed and for personal/research
+use only.
+
+Time to expiry is measured from the close of the last trading session, not from
+when the script runs: outside market hours the quotes are that session's
+closing quotes, and a weekend run would otherwise understate every T by up to
+two and a half days, which matters most on the shortest expiries.
 """
 
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -23,10 +28,16 @@ TARGETS = (2 / 52, 1 / 12, 2 / 12, 3 / 12, 6 / 12, 9 / 12, 1.0, 1.5)
 MAX_REL_SPREAD = 0.5  # drop quotes whose bid/ask spread exceeds 50% of mid
 
 
-def year_fraction(expiry: str, now: datetime) -> float:
-    # US equity options stop trading at 16:00 New York time (20:00/21:00 UTC); 20:30 is close enough.
-    expiry_dt = datetime.fromisoformat(expiry).replace(hour=20, minute=30, tzinfo=timezone.utc)
-    return (expiry_dt - now).total_seconds() / (365.0 * 86400.0)
+NY = "America/New_York"
+
+
+def market_close(day) -> pd.Timestamp:
+    """16:00 New York time on the given date: US equity options' last trading moment."""
+    return pd.Timestamp(pd.Timestamp(day).date()).tz_localize(NY) + pd.Timedelta(hours=16)
+
+
+def year_fraction(expiry: str, as_of: pd.Timestamp) -> float:
+    return (market_close(expiry) - as_of).total_seconds() / (365.0 * 86400.0)
 
 
 def tbill_rate() -> float:
@@ -39,10 +50,13 @@ def tbill_rate() -> float:
 
 def fetch(ticker: str) -> pd.DataFrame:
     tk = yf.Ticker(ticker)
-    spot = float(tk.history(period="5d")["Close"].iloc[-1])
-    now = datetime.now(timezone.utc)
+    history = tk.history(period="5d")
+    spot = float(history["Close"].iloc[-1])
+    # Quotes and spot are both as of the last session's close; while the market
+    # is open this is slightly stale, which is fine for delayed data.
+    as_of = market_close(history.index[-1])
 
-    listed = {e: year_fraction(e, now) for e in tk.options}
+    listed = {e: year_fraction(e, as_of) for e in tk.options if year_fraction(e, as_of) > 0}
     chosen = sorted({min(listed, key=lambda e: abs(listed[e] - t)) for t in TARGETS})
 
     frames = []
@@ -61,18 +75,20 @@ def fetch(ticker: str) -> pd.DataFrame:
     out = out[keep].copy()
     out["spot"] = spot
     out["rate"] = tbill_rate()
-    return out[["expiry", "T", "strike", "kind", "bid", "ask", "spot", "rate"]]
+    out["as_of"] = as_of.isoformat()
+    return out[["as_of", "expiry", "T", "strike", "kind", "bid", "ask", "spot", "rate"]]
 
 
 def main() -> None:
     ticker = sys.argv[1] if len(sys.argv) > 1 else "SPY"
     chain = fetch(ticker)
-    path = Path("data") / f"{ticker.lower()}_{datetime.now():%Y%m%d}.csv"
+    as_of = pd.Timestamp(chain["as_of"].iloc[0])
+    path = Path("data") / f"{ticker.lower()}_{as_of:%Y%m%d}.csv"
     path.parent.mkdir(exist_ok=True)
     chain.to_csv(path, index=False)
     print(
         f"{len(chain)} quotes across {chain['expiry'].nunique()} expiries, "
-        f"spot {chain['spot'].iloc[0]:.2f}, rate {chain['rate'].iloc[0]:.4f} -> {path}"
+        f"spot {chain['spot'].iloc[0]:.2f}, rate {chain['rate'].iloc[0]:.4f}, as of {as_of} -> {path}"
     )
 
 

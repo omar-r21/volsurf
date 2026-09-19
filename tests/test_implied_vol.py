@@ -51,6 +51,34 @@ def test_implied_forward_recovers_forward_and_discount():
     assert disc == pytest.approx(D, rel=1e-10)
 
 
+def test_implied_forward_with_known_discount_uses_nearest_strikes():
+    K = np.linspace(60, 140, 17)
+    call = black_price(F, K, 0.5, 0.25, D, "call")
+    put = black_price(F, K, 0.5, 0.25, D, "put")
+    put[0] += 5.0  # a bad deep-ITM put quote, far from the money
+    fwd, disc = implied_forward(K, call, put, n_nearest=5, discount=D)
+    assert disc == D
+    assert fwd == pytest.approx(F, rel=1e-12)
+
+
+def test_implausible_implied_rate_warns():
+    K = np.array([99.0, 100.0, 101.0])
+    call = np.array([2.00, 1.40, 0.90])
+    put = np.array([0.95, 1.40, 1.93])  # slope implies D ~ 1.04 at one month
+    with pytest.warns(UserWarning, match="rate"):
+        implied_forward(K, call, put, T=1 / 12)
+
+
+def test_unresolvable_time_value_is_nan_not_a_wrong_vol():
+    # 1e-140 of time value: no double-precision solver can recover a vol from it.
+    tiny = black_price(F, 100.5, 1e-6, 0.2, 1.0, "call")
+    assert 0 < tiny < 1e-100
+    assert np.isnan(implied_vol(tiny, F, 100.5, 1e-6, 1.0, "call"))
+    # Deep ITM call whose time value is below the price's rounding error.
+    itm = black_price(F, 60.0, 0.02, 0.05, D, "call")
+    assert np.isnan(implied_vol(itm, F, 60.0, 0.02, D, "call"))
+
+
 def test_implied_forward_needs_two_strikes():
     with pytest.raises(ValueError):
         implied_forward([100, 100], [5, 5], [4, 4])

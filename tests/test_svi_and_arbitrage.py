@@ -44,6 +44,19 @@ def test_fit_recovers_exact_smile():
     np.testing.assert_allclose(fit.params.total_variance(k), true.total_variance(k), atol=1e-7)
 
 
+def test_butterfly_penalty_repairs_an_arbitrageable_smile():
+    # Fit to Vogt's smile itself: unconstrained SVI reproduces the arbitrage,
+    # the penalised fit stays close to the data but has a non-negative density.
+    k = np.linspace(-1.0, 1.0, 41)
+    w = VOGT.total_variance(k)
+    grid = np.linspace(-2.0, 2.0, 401)
+    assert not butterfly_check(fit_svi(k, w).params, grid).ok
+    fixed = fit_svi(k, w, k_check=grid).params
+    assert butterfly_check(fixed, grid).ok
+    assert fixed.b * (1 + abs(fixed.rho)) <= 2.0 + 1e-9  # Lee's wing bound
+    assert np.max(np.abs(fixed.total_variance(k) - w)) < 0.01
+
+
 def test_fit_needs_five_points():
     with pytest.raises(ValueError):
         fit_svi([0.0, 0.1, 0.2, 0.3], [0.04] * 4)
@@ -88,3 +101,8 @@ def test_quote_checks_flag_each_kind_of_violation():
     # Call spread 90/95 costs 12 for a payoff of at most 5.
     steep = quote_violations(K, [20.0, 8.0, 5.0, 3.0, 2.0])
     assert {v.kind for v in steep} == {"slope"}
+
+    # With discounting, a spread may cost at most D times its width: 4.85 > 0.95 * 5.
+    discounted = quote_violations(K, [12.0, 7.15, 5.0, 3.0, 2.0], discount=0.95)
+    assert [(v.kind, v.strikes) for v in discounted] == [("slope", (90.0, 95.0))]
+    assert quote_violations(K, [12.0, 7.3, 5.0, 3.0, 2.0], discount=0.95) == []

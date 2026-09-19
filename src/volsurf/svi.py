@@ -29,6 +29,7 @@ from scipy.optimize import least_squares
 # is imposed with a small margin to leave the fitted slice strictly arbitrage-free.
 G_BUFFER = 1e-3  # Durrleman g(k) >= G_BUFFER
 BUTTERFLY_PENALTY = 100.0
+LEE_SLOPE = 2.0  # Lee (2004): total-variance wing slopes b (1 +/- rho) are at most 2
 
 
 @dataclass(frozen=True)
@@ -122,10 +123,13 @@ def fit_svi(
 
     SVI's objective has several local minima, so the fit runs from a small grid
     of starting points and keeps the best. Box bounds enforce b >= 0, |rho| < 1,
-    sigma > 0; a penalty residual enforces non-negative minimum variance.
+    sigma > 0; penalty residuals enforce non-negative minimum variance and Lee's
+    moment bound b (1 + |rho|) <= 2 on the wing slopes. That bound is also what
+    Durrleman's g(k) needs to stay positive as |k| goes to infinity: along a
+    linear wing of slope s, g tends to 1/4 - s^2/16.
 
-    With ``k_check``, a second penalty keeps Durrleman's g(k) >= 0 on that grid,
-    so the fitted smile is free of butterfly arbitrage. The penalty vanishes on
+    With ``k_check``, a further penalty keeps g(k) >= 0 on that grid, so the
+    fitted smile is free of butterfly arbitrage there. The penalty vanishes on
     slices that clear the constraint with a small margin, so a clean smile fits
     exactly as it would unconstrained. Weights are normalised to mean one.
     """
@@ -149,7 +153,10 @@ def fit_svi(
 
     def residuals(x: np.ndarray) -> np.ndarray:
         p = SVIParams(*x)
-        parts = [sw * (p.total_variance(k) - w), [1e3 * max(0.0, -p.min_total_variance)]]
+        parts = [
+            sw * (p.total_variance(k) - w),
+            [1e3 * max(0.0, -p.min_total_variance), 1e3 * max(0.0, p.b * (1.0 + abs(p.rho)) - LEE_SLOPE)],
+        ]
         if kc is not None:
             with np.errstate(divide="ignore", invalid="ignore"):
                 g = np.nan_to_num(durrleman_g(p, kc), nan=-1.0)

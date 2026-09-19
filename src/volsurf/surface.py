@@ -31,8 +31,12 @@ from .parity import implied_forward
 from .svi import SVIParams, fit_svi
 
 REQUIRED_COLUMNS = {"T", "strike", "kind", "bid", "ask"}
-CHECK_MARGIN = 0.25  # check grid extends this fraction of the quoted k-range past each end
+CHECK_MARGIN = 0.25  # fine check grid extends this fraction of the quoted k-range past each end
 CHECK_POINTS = 201
+# Coarse grid far into both wings, so the fitted smile is arbitrage-free wherever
+# the surface is likely to be queried, not only where it was quoted. Beyond it,
+# Lee's wing bound keeps g(k) positive asymptotically.
+WIDE_GRID = np.linspace(-3.0, 3.0, 241)
 
 
 @dataclass(frozen=True)
@@ -61,10 +65,12 @@ class ArbitrageReport:
 
 
 def _check_grid(k: ArrayLike) -> np.ndarray:
-    """The quoted k-range plus a margin at each end, where butterfly arbitrage is penalised and checked."""
+    """Where butterfly arbitrage is penalised and checked: a fine grid over the quoted
+    k-range plus a margin, merged with a coarse grid far into both wings."""
     k = np.asarray(k, dtype=float)
     pad = CHECK_MARGIN * (k.max() - k.min())
-    return np.linspace(k.min() - pad, k.max() + pad, CHECK_POINTS)
+    fine = np.linspace(k.min() - pad, k.max() + pad, CHECK_POINTS)
+    return np.union1d(fine, WIDE_GRID)
 
 
 def _overlap(a: pd.Series, b: pd.Series) -> np.ndarray:
@@ -94,7 +100,12 @@ def _fit_slice(
     both = q.pivot_table(index="strike", columns="kind", values="mid").dropna()
     if len(both) < 2 or not {"c", "p"} <= set(both.columns):
         return None
-    D = None if rate is None else float(np.exp(-rate * T))
+    if rate is None:
+        # The slope needs the widest strike range available; the forward then
+        # comes from the near-the-money strikes, as with a supplied rate.
+        _, D = implied_forward(both.index, both["c"], both["p"], T=T)
+    else:
+        D = float(np.exp(-rate * T))
     F, D = implied_forward(both.index, both["c"], both["p"], n_nearest=n_parity, discount=D)
 
     is_otm = ((q["kind"] == "p") & (q["strike"] < F)) | ((q["kind"] == "c") & (q["strike"] >= F))
@@ -146,8 +157,10 @@ class VolSurface:
     ) -> "VolSurface":
         """Build a surface from a chain with columns T, strike, kind ('call'/'put'), bid, ask.
 
-        ``rate`` (continuously compounded) fixes the discount factor per expiry;
-        without it the discount factor is also estimated from put-call parity.
+        ``rate`` (continuously compounded) fixes the discount factor per expiry.
+        Without it the discount factor is estimated from put-call parity across
+        every strike quoted both ways, with a warning if the implied rate is
+        implausible. Supplying a rate is strongly recommended on real chains.
         The smile fit uses OTM quotes with a mid of at least ``min_price`` (a few
         ticks on real chains) and |ln(K/F)| within ``max_std_moneyness`` ATM
         standard deviations. Expiries without enough usable quotes are skipped.
@@ -173,7 +186,9 @@ class VolSurface:
         return np.exp(-np.interp(T, self._T, self._rate) * T)
 
     def total_variance_k(self, k: ArrayLike, T: float) -> np.ndarray:
-        """Total variance at log-moneyness k and maturity T."""
+        """Total variance at log-moneyness k and a single maturity T > 0."""
+        if np.ndim(T) != 0 or not T > 0:
+            raise ValueError("T must be a single positive maturity; loop over maturities for a term structure")
         k = np.asarray(k, dtype=float)
         Ts = self._T
         if T <= Ts[0]:
@@ -197,8 +212,10 @@ class VolSurface:
         """Butterfly check per slice and calendar check per adjacent pair of expiries.
 
         By default butterfly is checked on each slice's quoted k-range plus a
-        margin (the grid the fit was constrained on), and calendar on the k-range
-        both expiries were quoted on. Pass ``k`` to check everything on one grid.
+        margin and on a coarse grid out to |k| = 3 (the grid the fit was
+        constrained on), and calendar on the k-range both expiries were quoted
+        on. Pass ``k`` to check everything on one grid of your choosing, which is
+        an independent test of the fit.
         """
         butterfly = {s.T: butterfly_check(s.params, s.k_check if k is None else k) for s in self.slices}
         calendar: list[CalendarViolation] = []

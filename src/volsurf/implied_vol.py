@@ -9,7 +9,13 @@ intrinsic value.
 Each option keeps a bracket [lo, hi] that always contains the root: a Newton
 step that leaves the bracket (or is not finite, e.g. when vega underflows deep
 in the wings) is replaced by bisection. Newton gives quadratic convergence
-near the root; the bracket makes convergence unconditional.
+near the root; the bracket guarantees convergence.
+
+Volatility is identified only through time value. When the OTM-equivalent
+price is too small to resolve in double precision (a deep ITM quote whose time
+value is lost to cancellation, or a far-wing price near 1e-12 of the forward),
+no vol can be recovered reliably and the solver returns NaN rather than a
+confident wrong answer.
 """
 
 from __future__ import annotations
@@ -21,6 +27,8 @@ from scipy.special import ndtr
 from .black_scholes import is_call
 
 SIGMA_MAX = 10.0  # 1000% vol: anything above is treated as unsolvable
+RESOLUTION = 1e3 * np.finfo(float).eps  # smallest usable time value, relative to the prices involved
+RESOLUTION = 1e3 * np.finfo(float).eps  # smallest usable time value, relative to the prices involved
 
 
 def _otm_price_and_vega(F, K, T, sigma, otm_call):
@@ -47,7 +55,8 @@ def implied_vol(
 
     Returns NaN where no volatility reproduces the price: at or below discounted
     intrinsic value, at or above the upper bound (D * F for calls, D * K for
-    puts), for non-positive expiries, or beyond ``SIGMA_MAX``.
+    puts), for non-positive expiries, or beyond ``SIGMA_MAX``; and where the time
+    value is below double-precision resolution (see module docstring).
     """
     price, F, K, T, D = np.broadcast_arrays(
         *(np.asarray(x, dtype=float) for x in (price, F, K, T, discount))
@@ -59,7 +68,8 @@ def implied_vol(
     # Quotes already on the OTM side are used as-is; ITM quotes go through parity.
     v = np.where(calls == otm_call, u, np.where(calls, u - (F - K), u + (F - K)))
     upper = np.where(otm_call, F, K)
-    valid = (T > 0) & (v > 0) & (v < upper)
+    resolvable = v > RESOLUTION * np.maximum(np.abs(u), F)
+    valid = (T > 0) & resolvable & (v < upper)
 
     # Solve only the valid entries; placeholder inputs keep the maths finite.
     Tv = np.where(valid, T, 1.0)

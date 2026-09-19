@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from .black_scholes import is_call
+
+from .black_scholes import is_call
+
 
 def crr_price(
     S: float,
@@ -22,8 +26,7 @@ def crr_price(
     american: bool = False,
     steps: int = 500,
 ) -> float:
-    if kind not in ("call", "put"):
-        raise ValueError("kind must be 'call' or 'put'")
+    call = bool(is_call(kind))
     if steps < 1 or T <= 0 or sigma <= 0:
         raise ValueError("need steps >= 1, T > 0 and sigma > 0")
 
@@ -34,7 +37,7 @@ def crr_price(
     if not 0.0 < p < 1.0:
         raise ValueError("risk-neutral probability outside (0, 1); increase steps")
     disc = np.exp(-r * dt)
-    sign = 1.0 if kind == "call" else -1.0
+    sign = 1.0 if call else -1.0
 
     # Terminal spots, ordered from the most down-moves to the most up-moves.
     spots = S * u ** np.arange(-steps, steps + 1, 2, dtype=float)

@@ -25,6 +25,11 @@ def test_zero_vol_is_discounted_intrinsic():
     assert black_price(F, 90, 1.0, 0.0, D, "put") == pytest.approx(0.0)
 
 
+def test_negative_vol_or_expiry_is_nan():
+    assert np.isnan(black_price(100, 90, 1.0, -0.2))
+    assert np.isnan(black_price(100, 90, -1.0, 0.2))
+
+
 def test_kind_accepts_arrays_and_rejects_garbage():
     prices = black_price(100, [90, 110], 1.0, 0.2, 1.0, ["C", "put"])
     assert prices.shape == (2,)
@@ -51,6 +56,10 @@ def test_greeks_match_finite_differences(kind):
 def test_binomial_converges_to_black_scholes(kind):
     exact = float(bs_price(S, K, T, R, VOL, Q, kind))
     assert crr_price(S, K, T, R, VOL, Q, kind, steps=2000) == pytest.approx(exact, abs=2e-3)
+
+
+def test_binomial_accepts_short_kind_names():
+    assert crr_price(S, K, T, R, VOL, Q, "p", steps=200) == crr_price(S, K, T, R, VOL, Q, "put", steps=200)
 
 
 def test_american_put_carries_early_exercise_premium():

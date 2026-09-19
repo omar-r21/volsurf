@@ -60,17 +60,20 @@ def black_price(
     d1   = ln(F/K) / (sigma sqrt(T)) + sigma sqrt(T) / 2,   d2 = d1 - sigma sqrt(T)
 
     With zero total volatility the price collapses to discounted intrinsic value.
+    Negative volatility or time to expiry gives NaN.
     """
     F, K, T, sigma, D = np.broadcast_arrays(
         *(np.asarray(x, dtype=float) for x in (F, K, T, sigma, discount))
     )
     calls = np.broadcast_to(is_call(kind), F.shape)
-    d1, d2, sd = _d1_d2(F, K, T, sigma)
+    invalid = (sigma < 0) | (T < 0)
+    with np.errstate(invalid="ignore"):
+        d1, d2, sd = _d1_d2(F, K, T, sigma)
     call = D * (F * ndtr(d1) - K * ndtr(d2))
     put = D * (K * ndtr(-d2) - F * ndtr(-d1))
     price = np.where(calls, call, put)
     intrinsic = D * np.where(calls, np.maximum(F - K, 0.0), np.maximum(K - F, 0.0))
-    return np.where(sd > 0, price, intrinsic)
+    return np.where(invalid, np.nan, np.where(sd > 0, price, intrinsic))
 
 
 def bs_price(
